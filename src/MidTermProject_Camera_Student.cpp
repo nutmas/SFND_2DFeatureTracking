@@ -18,6 +18,25 @@
 
 using namespace std;
 
+
+// set detector type
+// "SHITOMASI","HARRIS","FAST","BRISK","ORB","AKAZE","SIFT"
+string vdetectorType = "FAST";
+
+// set descriptor type
+// "BRISK","BRIEF", "ORB", "FREAK", "AKAZE", "SIFT"
+string vdescriptorType = "ORB";
+
+
+// set the descriptor matching type
+// MAT_BF, MAT_FLANN - only for SIFT
+string vMatcherType = "MAT_BF";
+
+// set the descriptor selector type
+// "SEL_NN" "SEL_KNN"
+string vSelectorType = "SEL_KNN";
+
+
 /* MAIN PROGRAM */
 int main(int argc, const char *argv[])
 {
@@ -35,13 +54,13 @@ int main(int argc, const char *argv[])
     int imgEndIndex = 9;   // last file index to load
     int imgFillWidth = 4;  // no. of digits which make up the file index (e.g. img-0001.png)
 
+
     // misc
     int dataBufferSize = 2;       // no. of images which are held in memory (ring buffer) at the same time
     vector<DataFrame> dataBuffer; // list of data frames which are held in memory at the same time
     bool bVis = false;            // visualize results
 
     /* MAIN LOOP OVER ALL IMAGES */
-
     for (size_t imgIndex = 0; imgIndex <= imgEndIndex - imgStartIndex; imgIndex++)
     {
         /* LOAD IMAGE INTO BUFFER */
@@ -62,7 +81,20 @@ int main(int argc, const char *argv[])
         // push image into data frame buffer
         DataFrame frame;
         frame.cameraImg = imgGray;
+
+        // manage the buffer size with a ring buffer
+        if(dataBuffer.size() == dataBufferSize)
+        {
+            // pop off oldest data
+            dataBuffer.erase(dataBuffer.begin());
+        }
+        // add new data to the buffer
         dataBuffer.push_back(frame);
+
+        // check buffer size is correct
+        assert(dataBuffer.size() <= dataBufferSize);
+
+        //std::cout << "data buffer size: " << dataBuffer.size() << std::endl;
 
         //// EOF STUDENT ASSIGNMENT
         cout << "#1 : LOAD IMAGE INTO BUFFER done" << endl;
@@ -71,7 +103,16 @@ int main(int argc, const char *argv[])
 
         // extract 2D keypoints from current image
         vector<cv::KeyPoint> keypoints; // create empty feature list for current image
-        string detectorType = "SHITOMASI";
+
+        string detectorType = vdetectorType;
+        //string detectorType = "SHITOMASI";
+        //string detectorType = "HARRIS";
+        //string detectorType = "FAST"; // really fast to work real time
+        //string detectorType = "BRISK";
+        //string detectorType = "ORB"; // efficient alternative to SIFT or SURF - fusion of FAST & BRIEF
+        //string detectorType = "AKAZE"; //
+        //string detectorType = "SIFT"; // good if scale of image changes
+        //string detectorType = "SURF"; // to test if failure
 
         //// STUDENT ASSIGNMENT
         //// TASK MP.2 -> add the following keypoint detectors in file matching2D.cpp and enable string-based selection based on detectorType
@@ -79,11 +120,18 @@ int main(int argc, const char *argv[])
 
         if (detectorType.compare("SHITOMASI") == 0)
         {
+            // detector for SHITOMASI corner detection & good features to track
             detKeypointsShiTomasi(keypoints, imgGray, false);
+        }
+        else if (detectorType.compare("HARRIS") == 0)
+        {
+            // add detector for HARRIS corner detection
+            detKeypointsHarris(keypoints, imgGray, false);
         }
         else
         {
-            //...
+            // all other detectors
+            detKeypointsModern(keypoints, imgGray, detectorType, false);
         }
         //// EOF STUDENT ASSIGNMENT
 
@@ -93,10 +141,43 @@ int main(int argc, const char *argv[])
         // only keep keypoints on the preceding vehicle
         bool bFocusOnVehicle = true;
         cv::Rect vehicleRect(535, 180, 180, 150);
+
         if (bFocusOnVehicle)
         {
-            // ...
+            // create vector to hold keypoints in region of interest
+            std::vector<cv::KeyPoint> roiKeyPoints;
+            // loop through all keypoints - if they are in ROI then add to vector
+            for(auto keypoint : keypoints)
+            {
+                if (vehicleRect.contains(keypoint.pt))
+                    roiKeyPoints.push_back(keypoint);
+            }
+
+            // replace keypoints data with roi keypoints data
+            keypoints = roiKeyPoints;
         }
+
+        // get the neighbourhood distrubution
+        //  number of keypoints associated with vehicle
+        float totalPoints = keypoints.size();
+        float meanOfKps = 0;
+        float medianOfKps = 0;
+
+        for(auto keypoint : keypoints)
+        {
+            // accumulate the size of each keypoint in keypoints
+            meanOfKps += keypoint.size; // mean
+
+        }
+
+        /*std::cout   << "ROI points: " << totalPoints
+                    << " Keypoint size sum: " << sumOfKps
+                    << " Distribution of neighbourhood size: " << sumOfKps/totalPoints
+                    << std::endl;*/
+
+        /*std::cout   << totalPoints << ","
+                    << meanOfKps << ","
+                    << (meanOfKps/totalPoints) << ",";*/
 
         //// EOF STUDENT ASSIGNMENT
 
@@ -111,7 +192,7 @@ int main(int argc, const char *argv[])
                 keypoints.erase(keypoints.begin() + maxKeypoints, keypoints.end());
             }
             cv::KeyPointsFilter::retainBest(keypoints, maxKeypoints);
-            cout << " NOTE: Keypoints have been limited!" << endl;
+            //cout << " NOTE: Keypoints have been limited!" << endl;
         }
 
         // push keypoints and descriptor for current frame to end of data buffer
@@ -125,7 +206,23 @@ int main(int argc, const char *argv[])
         //// -> BRIEF, ORB, FREAK, AKAZE, SIFT
 
         cv::Mat descriptors;
-        string descriptorType = "BRISK"; // BRIEF, ORB, FREAK, AKAZE, SIFT
+
+        string descriptorType = vdescriptorType;
+        //string descriptorType = "BRISK"; // BRIEF, ORB, FREAK, AKAZE, SIFT
+        //string descriptorType = "BRIEF";
+        //string descriptorType = "ORB";
+        //string descriptorType = "FREAK";
+        //string descriptorType = "SIFT";
+        //string descriptorType = "AKAZE";
+
+        if((descriptorType.compare("AKAZE")== 0) && detectorType.compare("AKAZE")!= 0)
+            // not a valid descriptor type
+            throw invalid_argument("\n" + descriptorType + " descriptor requires AKAZE detector");
+        if((descriptorType.compare("ORB")== 0) && detectorType.compare("SIFT")== 0)
+            // not a valid descriptor type
+            throw invalid_argument("\n" + descriptorType + " descriptor isn't compatible with " + detectorType + " detector");
+
+
         descKeypoints((dataBuffer.end() - 1)->keypoints, (dataBuffer.end() - 1)->cameraImg, descriptors, descriptorType);
         //// EOF STUDENT ASSIGNMENT
 
@@ -140,9 +237,21 @@ int main(int argc, const char *argv[])
             /* MATCH KEYPOINT DESCRIPTORS */
 
             vector<cv::DMatch> matches;
-            string matcherType = "MAT_BF";        // MAT_BF, MAT_FLANN
-            string descriptorType = "DES_BINARY"; // DES_BINARY, DES_HOG
-            string selectorType = "SEL_NN";       // SEL_NN, SEL_KNN
+            // Brute force descriptor Matching - tries to find closest descriptor in whole set by trying each one
+            string matcherType = vMatcherType;
+            //string matcherType = "MAT_BF";
+            //string matcherType = "MAT_FLANN";        // MAT_BF, MAT_FLANN
+
+            // set method relevant to descriptor type
+            string descriptorMethod = "DES_BINARY"; // Binary descriptors (BRISK, ORB)
+            // switch descriptor method based on keypoint descriptor type
+            if(descriptorType.compare("SIFT")== 0)
+                descriptorMethod = "DES_HOG"; // HOG descriptors(SIFT)
+
+            // set selector type
+            string selectorType =  vSelectorType;
+            //string selectorType = "SEL_NN";
+            //string selectorType = "SEL_KNN";      // SEL_NN (just nearest neighbour, SEL_KNN (keep k number of neighbours)
 
             //// STUDENT ASSIGNMENT
             //// TASK MP.5 -> add FLANN matching in file matching2D.cpp
@@ -150,7 +259,7 @@ int main(int argc, const char *argv[])
 
             matchDescriptors((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints,
                              (dataBuffer.end() - 2)->descriptors, (dataBuffer.end() - 1)->descriptors,
-                             matches, descriptorType, matcherType, selectorType);
+                             matches, descriptorMethod, matcherType, selectorType);
 
             //// EOF STUDENT ASSIGNMENT
 
